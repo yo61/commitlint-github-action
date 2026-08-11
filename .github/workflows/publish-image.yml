@@ -62,3 +62,22 @@ jobs:
           echo "published image runs node $node_version"
           docker run --rm --entrypoint node "$IMAGE:$VERSION" \
             -e 'console.log("commitlint " + require("/node_modules/@commitlint/lint/package.json").version)'
+
+      # action.yml pins the image by digest, so every release has to report the
+      # digest it just published for action.yml to be updated to.
+      - name: Report digest for action.yml
+        env:
+          IMAGE: ghcr.io/${{ github.repository_owner }}/commitlint-github-action
+        run: |
+          set -euo pipefail
+          digest=$(docker image inspect --format '{{index .RepoDigests 0}}' "$IMAGE:$VERSION" | cut -d@ -f2)
+          echo "published digest: $digest"
+          {
+            echo "### Image published"
+            echo
+            echo '```'
+            echo "image: docker://$IMAGE@$digest"
+            echo '```'
+            echo
+            echo "Update \`action.yml\` to this digest if it is not already."
+          } >> "$GITHUB_STEP_SUMMARY"
