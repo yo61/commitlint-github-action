@@ -47,3 +47,18 @@ jobs:
           docker build -t "$IMAGE:$VERSION" -t "$IMAGE:$MAJOR" .
           docker push "$IMAGE:$VERSION"
           docker push "$IMAGE:$MAJOR"
+
+      # Confirms the tag action.yml refers to is pullable and runnable. Pulling
+      # from a clean local cache proves it came from the registry rather than
+      # the layer just built.
+      - name: Smoke test the published image
+        env:
+          IMAGE: ghcr.io/${{ github.repository_owner }}/commitlint-github-action
+        run: |
+          set -euo pipefail
+          docker image rm -f "$IMAGE:$VERSION" "$IMAGE:$MAJOR"
+          docker pull "$IMAGE:$VERSION"
+          node_version=$(docker run --rm --entrypoint node "$IMAGE:$VERSION" --version)
+          echo "published image runs node $node_version"
+          docker run --rm --entrypoint node "$IMAGE:$VERSION" \
+            -e 'console.log("commitlint " + require("/node_modules/@commitlint/lint/package.json").version)'

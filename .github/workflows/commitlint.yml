@@ -27,22 +27,8 @@ jobs:
       - name: Show results from JSON output
         if: ${{ always() }}
         run: echo ${{ toJSON(steps.run_commitlint.outputs.results) }}
-  commitlint-pulling-from-docker-hub:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v3
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '24.19.0'
-      - uses: actions/cache@v3
-        with:
-          path: |
-            ~/.npm
-            **/node_modules
-          key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
-          restore-keys: |
-            ${{ runner.os }}-node-
-      - run: npm ci --ignore-scripts
-      - uses: ./
-        env:
-          NODE_PATH: ${{ github.workspace }}/node_modules
+  # Upstream also had a `commitlint-pulling-from-docker-hub` job that ran the
+  # action without rewriting action.yml, so it pulled whichever tag action.yml
+  # named. That can only pass once the image for that version is published, so
+  # it fails on every PR that bumps the version. The published image is smoke
+  # tested in publish-image.yml instead, where it exists.
