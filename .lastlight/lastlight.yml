@@ -1,0 +1,12 @@
+# Last Light per-repo configuration, read from this repo's default branch by the
+# harness (nearform/lastlight, apps/server/src/config/repo-config.ts).
+#
+# This repo is a fork of wagoid/commitlint-github-action, so nearly all the code
+# in it is upstream's. The weekly security scan would report findings against
+# code we do not own and cannot act on, so drop out of that cron's fan-out.
+#
+# This removes the repo from ONE cron, not from Last Light: PR review and every
+# other workflow still apply. Re-enable by deleting this file, or by moving the
+# entry to `crons.enable`.
+crons:
+  disable: [weekly-security-scan]
