@@ -39,8 +39,24 @@ jobs:
           RESULTS: ${{ toJSON(steps.run_commitlint.outputs.results) }}
         run: echo "$RESULTS"
 
-  # Upstream also had a `commitlint-pulling-from-docker-hub` job that ran the
-  # action without rewriting action.yml, so it pulled whichever tag action.yml
-  # named. That can only pass once the image for that version is published, so
-  # it fails on every PR that bumps the version. The published image is smoke
-  # tested in publish-image.yml instead, where it exists.
+  # Runs the action as consumers do: no rewrite of action.yml, so this pulls
+  # the pinned digest from ghcr.io. Upstream's equivalent job pulled a version
+  # tag and so failed on every PR that bumped the version, before the image for
+  # it existed. A digest always refers to an image already published, so this
+  # is safe to run on every push and proves the digest reference resolves.
+  commitlint-from-published-image:
+    permissions:
+      contents: read
+      pull-requests: read
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24.19.0'
+      - run: npm ci --ignore-scripts
+      - uses: ./
+        env:
+          NODE_PATH: ${{ github.workspace }}/node_modules
