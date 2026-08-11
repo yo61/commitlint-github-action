@@ -1,0 +1,64 @@
+name: Publish image
+
+# Upstream released via commit-and-tag-version and pushed to Docker Hub with
+# secrets this fork does not have. Here the tag is the trigger: push v6.3.0 and
+# this builds ghcr.io/yo61/commitlint-github-action:6.3.0, which action.yml
+# refers to.
+
+on:
+  push:
+    tags: ['v*']
+
+permissions: {}
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Derive version from tag
+        env:
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          version="${REF_NAME#v}"
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+          echo "MAJOR=${version%%.*}" >> "$GITHUB_ENV"
+
+      - name: Log in to ghcr.io
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ACTOR: ${{ github.actor }}
+        run: |
+          set -euo pipefail
+          echo "$GH_TOKEN" | docker login ghcr.io -u "$ACTOR" --password-stdin
+
+      - name: Build and push
+        env:
+          IMAGE: ghcr.io/${{ github.repository_owner }}/commitlint-github-action
+        run: |
+          set -euo pipefail
+          docker build -t "$IMAGE:$VERSION" -t "$IMAGE:$MAJOR" .
+          docker push "$IMAGE:$VERSION"
+          docker push "$IMAGE:$MAJOR"
+
+      # Confirms the tag action.yml refers to is pullable and runnable. Pulling
+      # from a clean local cache proves it came from the registry rather than
+      # the layer just built.
+      - name: Smoke test the published image
+        env:
+          IMAGE: ghcr.io/${{ github.repository_owner }}/commitlint-github-action
+        run: |
+          set -euo pipefail
+          docker image rm -f "$IMAGE:$VERSION" "$IMAGE:$MAJOR"
+          docker pull "$IMAGE:$VERSION"
+          node_version=$(docker run --rm --entrypoint node "$IMAGE:$VERSION" --version)
+          echo "published image runs node $node_version"
+          docker run --rm --entrypoint node "$IMAGE:$VERSION" \
+            -e 'console.log("commitlint " + require("/node_modules/@commitlint/lint/package.json").version)'

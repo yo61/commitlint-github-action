@@ -1,6 +1,8 @@
 name: CI
 on: [push]
 
+permissions: {}
+
 jobs:
   sanity-checks:
     permissions:
@@ -8,11 +10,13 @@ jobs:
     name: Sanity Checks
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          node-version: '20.16.0'
-      - uses: actions/cache@v3
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24.19.0'
+      - uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
         with:
           path: |
             ~/.npm
@@ -23,66 +27,19 @@ jobs:
       - run: npm ci --ignore-scripts
       - run: npm run lint
       - run: npm test -- --ci --coverage
-  release:
+
+  # Upstream's release job ran commit-and-tag-version and pushed to Docker Hub
+  # using DOCKER_USERNAME/DOCKER_TOKEN. This fork publishes to ghcr.io from a
+  # pushed tag instead — see .github/workflows/publish-image.yml.
+
+  image-builds:
     permissions:
-      contents: write
+      contents: read
     needs: sanity-checks
+    name: Image builds
     runs-on: ubuntu-latest
-    if: >
-      github.ref == 'refs/heads/master'
-      && !contains(toJSON(github.event.commits.*.message), '[skip-ci]')
-      && !contains(toJSON(github.event.commits.*.message), 'chore(deps-dev)')
-    env:
-      DOCKER_REGISTRY_URL: registry.hub.docker.com
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          fetch-depth: 0
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20.16.0'
-      - uses: actions/cache@v3
-        with:
-          path: |
-            ~/.npm
-            **/node_modules
-          key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
-          restore-keys: |
-            ${{ runner.os }}-node-
-      - run: npm ci --ignore-scripts
-      - name: Configure git user
-        run: |
-          git config user.email 'github-action@users.noreply.github.com'
-          git config user.name 'GitHub Action'
-      - name: Update versions and changelog
-        run: |
-          # remove `"type": "module"` from package.json since `commit-and-tag-version` doesn't support it
-          sed -i '/"type": "module",/c\' package.json
-          npx commit-and-tag-version
-          # bring back `"type": "module"`
-          sed -i 's/"private": true,/"private": true,\n  "type": "module",/' package.json
-          git commit --amend --no-edit
-      - name: Set VERSION env var
-        run: |
-          version=`node -p "require('./package.json').version"`
-          echo "VERSION=$version" >> $GITHUB_ENV
-      - name: Login to docker registry
-        env:
-          DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
-          DOCKER_TOKEN: ${{ secrets.DOCKER_TOKEN }}
-        run: docker login -u $DOCKER_USERNAME -p $DOCKER_TOKEN $DOCKER_REGISTRY_URL
-      - name: Build image
-        run: |
-          docker build -t $DOCKER_REGISTRY_URL/wagoid/commitlint-github-action:$VERSION .
-      - name: Push to docker registry
-        run: |
-          docker push $DOCKER_REGISTRY_URL/wagoid/commitlint-github-action:$VERSION
-      - run: git push --atomic --follow-tags origin master
-      - name: Create a git tag for the major version
-        run: |
-          major=`echo $VERSION | sed -E 's/([0-9]+)(.+)/\1/'`
-          version_name="v$major"
-          tag_heading="This version points to the latest version available (v$VERSION)."
-          tag_body="This is necessary because currently Github Actions don't apply any semantic versioning matching when downloading versions."
-          git tag -fa "$version_name" -m "$version_name" -m "$tag_heading" -m "$tag_body"
-          git push -f origin "$version_name"
+          persist-credentials: false
+      - run: docker build -t commitlint-github-action:ci .
