@@ -36,7 +36,10 @@ outputs:
     description: The error and warning messages for each one of the analyzed commits
 runs:
   using: docker
-  image: docker://ghcr.io/yo61/commitlint-github-action:6.3.0
+  # Pinned by digest, not tag: a tag is mutable, so pinning this action by
+  # commit SHA downstream would still leave the image swappable. This digest
+  # is the image published for v6.3.0.
+  image: docker://ghcr.io/yo61/commitlint-github-action@sha256:78d47699285290a64b68853ca36a6b3554955bda1d4d6c430a843817b0e1940a
 branding:
   icon: check-square
   color: blue
