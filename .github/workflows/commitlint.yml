@@ -1,17 +1,26 @@
 name: Commitlint
 on: [push, pull_request]
 
+permissions: {}
+
 jobs:
   commitlint:
+    permissions:
+      contents: read
+      pull-requests: read
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # Point action.yml at the local Dockerfile so this runs the code in the
+      # branch rather than a previously published image.
       - run: sed -i -E "s/(docker:.+)/Dockerfile/" ./action.yml
       - run: echo -n '' > .dockerignore
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '24.19.0'
-      - uses: actions/cache@v3
+      - uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
         with:
           path: |
             ~/.npm
@@ -26,7 +35,10 @@ jobs:
           NODE_PATH: ${{ github.workspace }}/node_modules
       - name: Show results from JSON output
         if: ${{ always() }}
-        run: echo ${{ toJSON(steps.run_commitlint.outputs.results) }}
+        env:
+          RESULTS: ${{ toJSON(steps.run_commitlint.outputs.results) }}
+        run: echo "$RESULTS"
+
   # Upstream also had a `commitlint-pulling-from-docker-hub` job that ran the
   # action without rewriting action.yml, so it pulled whichever tag action.yml
   # named. That can only pass once the image for that version is published, so
