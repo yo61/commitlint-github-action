@@ -22,3 +22,17 @@ updates:
     directory: /
     schedule:
       interval: weekly
+
+  - package-ecosystem: pre-commit
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      hooks:
+        patterns:
+        - "*"
+        update-types:
+        - "patch"
+        - "minor"
