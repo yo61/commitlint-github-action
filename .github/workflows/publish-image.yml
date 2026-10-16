@@ -11,9 +11,15 @@ on:
 
 permissions: {}
 
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+  queue: max
+
 jobs:
   publish:
     runs-on: ubuntu-latest
+    timeout-minutes: 6
     permissions:
       contents: read
       packages: write
