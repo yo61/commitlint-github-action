@@ -19,8 +19,11 @@ jobs:
         with:
           persist-credentials: false
       - uses: j178/prek-action@1382ad72dea72f9d53832f2bcb65b3e87a947204 # v3.0.1
+        env:
+          # renovate: datasource=github-releases depName=j178/prek extractVersion=^v(?<version>.+)$
+          PREK_VERSION: 0.5.5
         with:
-          prek-version: 0.5.5
+          prek-version: ${{ env.PREK_VERSION }}
 
   sanity-checks:
     permissions:
