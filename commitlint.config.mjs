@@ -14,6 +14,19 @@ const validateBodyMaxLengthIgnoringDeps = (parsedCommit) => {
   ]
 }
 
+// A GitHub App's noreply address alone makes its co-author trailer too long.
+const validateFooterMaxLengthIgnoringCoAuthors = (parsedCommit) => {
+  const footer = (parsedCommit.footer ?? '')
+    .split('\n')
+    .filter((line) => !/^co-authored-by:/i.test(line))
+    .join('\n')
+
+  return [
+    !footer || maxLineLength(footer, bodyMaxLineLength),
+    `footer's lines must not be longer than ${bodyMaxLineLength}`,
+  ]
+}
+
 export default {
   extends: ['@commitlint/config-conventional'],
   plugins: ['commitlint-plugin-function-rules'],
@@ -23,6 +36,12 @@ export default {
       2,
       'always',
       validateBodyMaxLengthIgnoringDeps,
+    ],
+    'footer-max-line-length': [0],
+    'function-rules/footer-max-line-length': [
+      2,
+      'always',
+      validateFooterMaxLengthIgnoringCoAuthors,
     ],
   },
 }
