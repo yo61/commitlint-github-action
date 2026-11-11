@@ -1,5 +1,12 @@
 # Changelog
 
+## [7.1.0](https://github.com/yo61/commitlint-github-action/compare/v7.0.0...v7.1.0) (2026-11-11)
+
+
+### Features
+
+* publish the image for linux/arm64 as well as linux/amd64 ([#19](https://github.com/yo61/commitlint-github-action/issues/19)) ([f609007](https://github.com/yo61/commitlint-github-action/commit/f609007b28582aac8177a52fcf56595bd1d4efbd))
+
 ## [7.0.0](https://github.com/yo61/commitlint-github-action/compare/v6.3.1...v7.0.0) (2026-11-11)
 
 
