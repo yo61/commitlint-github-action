@@ -8,7 +8,6 @@
       "package-name": "commitlint-github-action",
       "changelog-path": "CHANGELOG.md",
       "bootstrap-sha": "501ff7bb31eb7133c871318c877d0e43cd1ff500",
-      "release-as": "7.0.0",
       "changelog-sections": [
         { "type": "feat", "section": "Features" },
         { "type": "fix", "section": "Bug Fixes" },
