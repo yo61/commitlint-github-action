@@ -54,8 +54,8 @@ jobs:
       - run: npm test -- --ci --coverage
 
   # Upstream's release job ran commit-and-tag-version and pushed to Docker Hub
-  # using DOCKER_USERNAME/DOCKER_TOKEN. This fork publishes to ghcr.io from a
-  # pushed tag instead — see .github/workflows/publish-image.yml.
+  # using DOCKER_USERNAME/DOCKER_TOKEN. This fork publishes to ghcr.io from the
+  # release PR instead — see .github/workflows/release.yml.
 
   image-builds:
     permissions:
