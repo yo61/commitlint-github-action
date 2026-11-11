@@ -1,0 +1,28 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "release-type": "node",
+  "include-v-in-tag": true,
+  "include-component-in-tag": false,
+  "packages": {
+    ".": {
+      "package-name": "commitlint-github-action",
+      "changelog-path": "CHANGELOG.md",
+      "bootstrap-sha": "501ff7bb31eb7133c871318c877d0e43cd1ff500",
+      "release-as": "7.0.0",
+      "changelog-sections": [
+        { "type": "feat", "section": "Features" },
+        { "type": "fix", "section": "Bug Fixes" },
+        { "type": "perf", "section": "Performance Improvements" },
+        { "type": "deps", "section": "Dependencies" },
+        { "type": "revert", "section": "Reverts" },
+        { "type": "docs", "section": "Documentation" },
+        { "type": "refactor", "section": "Code Refactoring" },
+        { "type": "build", "section": "Build System" },
+        { "type": "style", "hidden": true },
+        { "type": "test", "hidden": true },
+        { "type": "ci", "hidden": true },
+        { "type": "chore", "hidden": true }
+      ]
+    }
+  }
+}

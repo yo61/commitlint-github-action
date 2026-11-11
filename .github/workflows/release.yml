@@ -1,0 +1,274 @@
+name: Release
+
+# How releases pin the image: decisions/2026-11-11-release-please-pins-image-on-release-pr.md
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+  queue: max
+
+env:
+  IMAGE: ghcr.io/${{ github.repository_owner }}/commitlint-github-action
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      version: ${{ steps.release.outputs.version }}
+      major: ${{ steps.release.outputs.major }}
+      sha: ${{ steps.release.outputs.sha }}
+    steps:
+      - id: create_token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ secrets.SEMANTIC_RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.SEMANTIC_RELEASE_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write
+          permission-pull-requests: write
+
+      - id: release
+        uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+        with:
+          token: ${{ steps.create_token.outputs.token }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+  pin-image:
+    needs: release-please
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - id: create_token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ secrets.SEMANTIC_RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.SEMANTIC_RELEASE_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write
+          permission-pull-requests: write
+
+      - id: pr
+        name: Find the open release PR
+        env:
+          GH_TOKEN: ${{ steps.create_token.outputs.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          prs=$(gh pr list --repo "$REPO" --state open --label 'autorelease: pending' --json number,headRefName)
+          case $(jq length <<< "$prs") in
+            0)
+              echo "no open release PR; nothing to pin"
+              echo "skip=true" >> "$GITHUB_OUTPUT"
+              exit 0
+              ;;
+            1) ;;
+            *)
+              echo "::error::expected at most one open 'autorelease: pending' PR, found: $prs"
+              exit 1
+              ;;
+          esac
+          echo "number=$(jq -r '.[0].number' <<< "$prs")" >> "$GITHUB_OUTPUT"
+          echo "branch=$(jq -r '.[0].headRefName' <<< "$prs")" >> "$GITHUB_OUTPUT"
+
+      - if: steps.pr.outputs.skip != 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - if: steps.pr.outputs.skip != 'true'
+        name: Bring the release PR up to date with main
+        env:
+          GH_TOKEN: ${{ steps.create_token.outputs.token }}
+          REPO: ${{ github.repository }}
+          NUMBER: ${{ steps.pr.outputs.number }}
+          BRANCH: ${{ steps.pr.outputs.branch }}
+        run: |
+          set -euo pipefail
+          git fetch -q origin "$BRANCH"
+          if git merge-base --is-ancestor origin/main "origin/$BRANCH"; then
+            echo "$BRANCH already contains main"
+          else
+            gh api -X PUT "repos/$REPO/pulls/$NUMBER/update-branch" > /dev/null
+            for _ in $(seq 30); do
+              git fetch -q origin "$BRANCH"
+              git merge-base --is-ancestor origin/main "origin/$BRANCH" && break
+              sleep 2
+            done
+            if ! git merge-base --is-ancestor origin/main "origin/$BRANCH"; then
+              echo "::error::$BRANCH still does not contain main a minute after update-branch"
+              exit 1
+            fi
+          fi
+          git checkout -q --detach "origin/$BRANCH"
+
+      - if: steps.pr.outputs.skip != 'true'
+        id: check
+        name: Skip if the branch already ends in a pin commit
+        run: |
+          set -euo pipefail
+          subject=$(git log -1 --format=%s)
+          if [[ "$subject" == "chore(release): pin image digest"* ]]; then
+            echo "branch already ends in a pin commit; nothing to do"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - if: steps.pr.outputs.skip != 'true' && steps.check.outputs.skip != 'true'
+        name: Build and push the image
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ACTOR: ${{ github.actor }}
+        run: |
+          set -euo pipefail
+          echo "$GH_TOKEN" | docker login ghcr.io -u "$ACTOR" --password-stdin
+          docker build --label "org.opencontainers.image.revision=$(git rev-parse HEAD)" -t "$IMAGE:release-pr" .
+          docker push "$IMAGE:release-pr"
+          digest=$(docker image inspect --format '{{index .RepoDigests 0}}' "$IMAGE:release-pr" | cut -d@ -f2)
+          echo "DIGEST=$digest" >> "$GITHUB_ENV"
+          echo "pushed $IMAGE@$digest"
+
+      # API commits are signed by the App, as the required_signatures rule on main demands.
+      - if: steps.pr.outputs.skip != 'true' && steps.check.outputs.skip != 'true'
+        name: Commit the digest to action.yml
+        env:
+          GH_TOKEN: ${{ steps.create_token.outputs.token }}
+          REPO: ${{ github.repository }}
+          BRANCH: ${{ steps.pr.outputs.branch }}
+        run: |
+          set -euo pipefail
+          sed -E -i "s|^(  image: docker://$IMAGE@)sha256:[0-9a-f]{64}\$|\1$DIGEST|" action.yml
+          if ! grep -qF "image: docker://$IMAGE@$DIGEST" action.yml; then
+            echo "::error::action.yml has no 'image: docker://$IMAGE@sha256:...' line to update"
+            exit 1
+          fi
+          # shellcheck disable=SC2016 # GraphQL variables, not shell expansions.
+          query='mutation($repo: String!, $branch: String!, $sha: GitObjectID!, $headline: String!, $content: Base64String!) {
+            createCommitOnBranch(input: {
+              branch: { repositoryNameWithOwner: $repo, branchName: $branch },
+              message: { headline: $headline },
+              expectedHeadOid: $sha,
+              fileChanges: { additions: [{ path: "action.yml", contents: $content }] }
+            }) { commit { url } }
+          }'
+          jq -n \
+            --arg query "$query" \
+            --arg repo "$REPO" \
+            --arg branch "$BRANCH" \
+            --arg sha "$(git rev-parse HEAD)" \
+            --arg headline "chore(release): pin image digest ${DIGEST:7:12}" \
+            --arg content "$(base64 -w0 < action.yml)" \
+            '{query: $query, variables: {repo: $repo, branch: $branch, sha: $sha, headline: $headline, content: $content}}' \
+            > "$RUNNER_TEMP/graphql.json"
+          gh api graphql --input "$RUNNER_TEMP/graphql.json"
+
+  publish:
+    needs: release-please
+    if: needs.release-please.outputs.release_created == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: write
+    env:
+      VERSION: ${{ needs.release-please.outputs.version }}
+      MAJOR: ${{ needs.release-please.outputs.major }}
+      SHA: ${{ needs.release-please.outputs.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.release-please.outputs.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Read the digest the release pins
+        run: |
+          set -euo pipefail
+          if git diff --quiet HEAD^ HEAD -- action.yml; then
+            echo "::error::Release commit $SHA does not change action.yml, so it still pins the previous release's image. Nothing was tagged; release a patch once pin-image has committed to the release PR."
+            exit 1
+          fi
+          image=$(yq '.runs.image' action.yml)
+          digest=${image#"docker://$IMAGE@"}
+          if [[ "$digest" == "$image" || ! "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "::error::action.yml runs.image is '$image', expected docker://$IMAGE@sha256:<digest>"
+            exit 1
+          fi
+          echo "DIGEST=$digest" >> "$GITHUB_ENV"
+
+      - name: Check the pinned image was built from the released source
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ACTOR: ${{ github.actor }}
+        run: |
+          set -euo pipefail
+          echo "$GH_TOKEN" | docker login ghcr.io -u "$ACTOR" --password-stdin
+          docker pull -q "$IMAGE@$DIGEST" > /dev/null
+          revision=$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$IMAGE@$DIGEST")
+          if [[ ! "$revision" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::$IMAGE@$DIGEST has no org.opencontainers.image.revision label, so its source cannot be checked. Nothing was tagged."
+            exit 1
+          fi
+          git fetch -q origin "$revision"
+          if ! git diff --quiet "$revision" "$SHA" -- . ':(exclude)action.yml'; then
+            echo "::error::$IMAGE@$DIGEST was built from $revision, which differs from release commit $SHA outside action.yml:"
+            git diff --stat "$revision" "$SHA" -- . ':(exclude)action.yml'
+            echo "::error::Nothing was tagged. Release a patch once pin-image has rebuilt the release PR."
+            exit 1
+          fi
+          echo "$IMAGE@$DIGEST was built from $revision, the released source"
+
+      - name: Tag the pinned image
+        run: |
+          set -euo pipefail
+          docker buildx imagetools create -t "$IMAGE:$VERSION" -t "$IMAGE:$MAJOR" "$IMAGE@$DIGEST"
+
+      - name: Smoke test the published image
+        run: |
+          set -euo pipefail
+          docker pull "$IMAGE:$VERSION"
+          published=$(docker image inspect --format '{{index .RepoDigests 0}}' "$IMAGE:$VERSION" | cut -d@ -f2)
+          if [[ "$published" != "$DIGEST" ]]; then
+            echo "::error::$IMAGE:$VERSION is $published, but action.yml pins $DIGEST"
+            exit 1
+          fi
+          echo "published image runs node $(docker run --rm --entrypoint node "$IMAGE:$VERSION" --version)"
+          docker run --rm --entrypoint node "$IMAGE:$VERSION" \
+            -e 'console.log("commitlint " + require("/node_modules/@commitlint/lint/package.json").version)'
+
+      - id: create_token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ secrets.SEMANTIC_RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.SEMANTIC_RELEASE_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write
+
+      - name: Move the major version tag
+        env:
+          GH_TOKEN: ${{ steps.create_token.outputs.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          tag="v$MAJOR"
+          if gh api "repos/$REPO/git/ref/tags/$tag" > /dev/null 2>&1; then
+            gh api -X PATCH "repos/$REPO/git/refs/tags/$tag" -f "sha=$SHA" -F force=true
+          else
+            gh api -X POST "repos/$REPO/git/refs" -f "ref=refs/tags/$tag" -f "sha=$SHA"
+          fi
+          echo "::notice::$tag now points at $SHA"
