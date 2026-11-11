@@ -12,7 +12,7 @@
     "build": "rollup -c"
   },
   "engines": {
-    "node": "24.19.0"
+    "node": "26.13.0"
   },
   "repository": {
     "type": "git",
