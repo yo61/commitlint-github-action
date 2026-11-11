@@ -267,8 +267,8 @@ jobs:
           set -euo pipefail
           tag="v$MAJOR"
           if gh api "repos/$REPO/git/ref/tags/$tag" > /dev/null 2>&1; then
-            gh api -X PATCH "repos/$REPO/git/refs/tags/$tag" -f "sha=$SHA" -F force=true
+            gh api -X PATCH "repos/$REPO/git/refs/tags/$tag" -f "sha=$SHA" -F force=true > /dev/null
           else
-            gh api -X POST "repos/$REPO/git/refs" -f "ref=refs/tags/$tag" -f "sha=$SHA"
+            gh api -X POST "repos/$REPO/git/refs" -f "ref=refs/tags/$tag" -f "sha=$SHA" > /dev/null
           fi
           echo "::notice::$tag now points at $SHA"
