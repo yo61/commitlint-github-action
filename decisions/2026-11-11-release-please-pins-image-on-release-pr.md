@@ -64,4 +64,20 @@ landing between a push to `main` and the rebuild it triggers.
 - `build` commits are shown in the changelog here, unlike the other repos: for a Docker action the
   runtime and its build are what users get.
 
+## Amended 2026-11-11: the image is built for linux/amd64 and linux/arm64
+
+Until v7.0.0 the image was amd64 only, as upstream's was, so the action failed on arm64 runners
+with `no matching manifest for linux/arm64/v8`. `pin-image` is split into `pin-prepare`, a
+`pin-build` matrix that builds each architecture natively (`ubuntu-latest`, `ubuntu-24.04-arm`) and
+pushes it as `release-pr-<arch>`, and `pin-commit`, which checks both carry the expected revision
+label, merges them into one index with `docker buildx imagetools create`, and pins the index digest.
+Native runners were chosen over a single QEMU-emulated `buildx --platform` build, which runs
+`npm ci` under emulation on every release-PR update. The images are built with
+`--provenance=false` so the index holds only the two platform manifests.
+
+Before tagging, a `verify` matrix pulls the pinned index on each architecture, checks that
+architecture's revision label against the release commit, and smoke tests it natively. `publish`
+then checks the index holds exactly both platforms, tags it, and confirms each tag resolves to the
+pinned digest.
+
 ## Supersedes: none
