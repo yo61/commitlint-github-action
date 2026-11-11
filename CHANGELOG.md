@@ -1,5 +1,12 @@
 # Changelog
 
+## [7.0.0](https://github.com/yo61/commitlint-github-action/compare/v6.3.1...v7.0.0) (2026-11-11)
+
+
+### Build System
+
+* run the action on node 26.13.0 ([#15](https://github.com/yo61/commitlint-github-action/issues/15)) ([6bb61dd](https://github.com/yo61/commitlint-github-action/commit/6bb61dd374e6d5825eeb4a1c189cc45eddcef272))
+
 ## [6.2.1](https://github.com/wagoid/commitlint-github-action/compare/v6.2.0...v6.2.1) (2025-01-14)
 
 ## [6.2.0](https://github.com/wagoid/commitlint-github-action/compare/v6.1.2...v6.2.0) (2024-12-16)
