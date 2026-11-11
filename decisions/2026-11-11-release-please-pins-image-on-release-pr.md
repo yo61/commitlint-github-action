@@ -21,8 +21,8 @@ removed.
 
 ## Alternatives considered:
 
-- **Pin by tag again** (`image: docker://…:X.Y.Z`, bumped by an `x-release-please-version` marker).
-  Simplest, but reverses `fae6c5c`: a tag can be repointed after release.
+- **Pin by tag again** (`image: docker://…:X.Y.Z`, bumped by an `x-release-please-version`
+  marker). Simplest, but reverses `fae6c5c`: a tag can be repointed after release.
 - **Release first, pin after.** Leave the build on the tag and have a bot PR pin the digest. Every
   release would ship the previous release's image.
 - **Build from the Dockerfile at run time** (`image: Dockerfile`), as upstream once did. No pin to
@@ -79,5 +79,10 @@ Before tagging, a `verify` matrix pulls the pinned index on each architecture, c
 architecture's revision label against the release commit, and smoke tests it natively. `publish`
 then checks the index holds exactly both platforms, tags it, and confirms each tag resolves to the
 pinned digest.
+
+First shipped in v7.1.0 (#19, #20). Once `main` pinned the two-platform index,
+`commitlint-from-published-image` gained an `ubuntu-24.04-arm` leg (#21), so every PR, the release
+PR included, runs the pinned image as consumers do on both architectures. A release PR pinning an
+amd64-only image fails that leg before anything is tagged.
 
 ## Supersedes: none
