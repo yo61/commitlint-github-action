@@ -16,6 +16,7 @@ concurrency:
 
 env:
   IMAGE: ghcr.io/${{ github.repository_owner }}/commitlint-github-action
+  PLATFORMS: linux/amd64 linux/arm64
 
 jobs:
   release-please:
@@ -44,13 +45,16 @@ jobs:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
 
-  pin-image:
+  pin-prepare:
     needs: release-please
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 5
     permissions:
       contents: read
-      packages: write
+    outputs:
+      build: ${{ steps.check.outputs.build }}
+      branch: ${{ steps.pr.outputs.branch }}
+      sha: ${{ steps.check.outputs.sha }}
     steps:
       - id: create_token
         uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
@@ -125,30 +129,98 @@ jobs:
           subject=$(git log -1 --format=%s)
           if [[ "$subject" == "chore(release): pin image digest"* ]]; then
             echo "branch already ends in a pin commit; nothing to do"
-            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
+          echo "build=true" >> "$GITHUB_OUTPUT"
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
-      - if: steps.pr.outputs.skip != 'true' && steps.check.outputs.skip != 'true'
-        name: Build and push the image
+  pin-build:
+    needs: pin-prepare
+    if: needs.pin-prepare.outputs.build == 'true'
+    strategy:
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.pin-prepare.outputs.sha }}
+          persist-credentials: false
+
+      - name: Build and push the ${{ matrix.arch }} image
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ACTOR: ${{ github.actor }}
+          SHA: ${{ needs.pin-prepare.outputs.sha }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          echo "$GH_TOKEN" | docker login ghcr.io -u "$ACTOR" --password-stdin
+          docker build --provenance=false --label "org.opencontainers.image.revision=$SHA" \
+            -t "$IMAGE:release-pr-$ARCH" .
+          docker push "$IMAGE:release-pr-$ARCH"
+
+  pin-commit:
+    needs: [pin-prepare, pin-build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      packages: write
+    env:
+      SHA: ${{ needs.pin-prepare.outputs.sha }}
+    steps:
+      - name: Merge the per-arch images into one index
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ACTOR: ${{ github.actor }}
         run: |
           set -euo pipefail
           echo "$GH_TOKEN" | docker login ghcr.io -u "$ACTOR" --password-stdin
-          docker build --label "org.opencontainers.image.revision=$(git rev-parse HEAD)" -t "$IMAGE:release-pr" .
-          docker push "$IMAGE:release-pr"
-          digest=$(docker image inspect --format '{{index .RepoDigests 0}}' "$IMAGE:release-pr" | cut -d@ -f2)
+          sources=()
+          for platform in $PLATFORMS; do
+            ref="$IMAGE:release-pr-${platform#linux/}"
+            revision=$(docker buildx imagetools inspect "$ref" --format '{{json .Image}}' \
+              | jq -r '.config.Labels["org.opencontainers.image.revision"]')
+            if [[ "$revision" != "$SHA" ]]; then
+              echo "::error::$ref was built from '$revision', not $SHA"
+              exit 1
+            fi
+            sources+=("$IMAGE@$(docker buildx imagetools inspect "$ref" --format '{{json .Manifest}}' | jq -r .digest)")
+          done
+          docker buildx imagetools create -t "$IMAGE:release-pr" "${sources[@]}"
+          digest=$(docker buildx imagetools inspect "$IMAGE:release-pr" --format '{{json .Manifest}}' | jq -r .digest)
           echo "DIGEST=$digest" >> "$GITHUB_ENV"
-          echo "pushed $IMAGE@$digest"
+          echo "pushed $IMAGE@$digest from ${sources[*]}"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.pin-prepare.outputs.sha }}
+          persist-credentials: false
+
+      - id: create_token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ secrets.SEMANTIC_RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.SEMANTIC_RELEASE_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write
 
       # API commits are signed by the App, as the required_signatures rule on main demands.
-      - if: steps.pr.outputs.skip != 'true' && steps.check.outputs.skip != 'true'
-        name: Commit the digest to action.yml
+      - name: Commit the digest to action.yml
         env:
           GH_TOKEN: ${{ steps.create_token.outputs.token }}
           REPO: ${{ github.repository }}
-          BRANCH: ${{ steps.pr.outputs.branch }}
+          BRANCH: ${{ needs.pin-prepare.outputs.branch }}
         run: |
           set -euo pipefail
           sed -E -i "s|^(  image: docker://$IMAGE@)sha256:[0-9a-f]{64}\$|\1$DIGEST|" action.yml
@@ -169,25 +241,28 @@ jobs:
             --arg query "$query" \
             --arg repo "$REPO" \
             --arg branch "$BRANCH" \
-            --arg sha "$(git rev-parse HEAD)" \
+            --arg sha "$SHA" \
             --arg headline "chore(release): pin image digest ${DIGEST:7:12}" \
             --arg content "$(base64 -w0 < action.yml)" \
             '{query: $query, variables: {repo: $repo, branch: $branch, sha: $sha, headline: $headline, content: $content}}' \
             > "$RUNNER_TEMP/graphql.json"
           gh api graphql --input "$RUNNER_TEMP/graphql.json"
 
-  publish:
+  verify:
     needs: release-please
     if: needs.release-please.outputs.release_created == 'true'
-    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        runner: [ubuntu-latest, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 10
     permissions:
       contents: read
-      packages: write
+      packages: read
     env:
-      VERSION: ${{ needs.release-please.outputs.version }}
-      MAJOR: ${{ needs.release-please.outputs.major }}
       SHA: ${{ needs.release-please.outputs.sha }}
+    outputs:
+      digest: ${{ steps.digest.outputs.digest }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -195,11 +270,12 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Read the digest the release pins
+      - id: digest
+        name: Read the digest the release pins
         run: |
           set -euo pipefail
           if git diff --quiet HEAD^ HEAD -- action.yml; then
-            echo "::error::Release commit $SHA does not change action.yml, so it still pins the previous release's image. Nothing was tagged; release a patch once pin-image has committed to the release PR."
+            echo "::error::Release commit $SHA does not change action.yml, so it still pins the previous release's image. Nothing was tagged; release a patch once pin-commit has committed to the release PR."
             exit 1
           fi
           image=$(yq '.runs.image' action.yml)
@@ -209,8 +285,9 @@ jobs:
             exit 1
           fi
           echo "DIGEST=$digest" >> "$GITHUB_ENV"
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
 
-      - name: Check the pinned image was built from the released source
+      - name: Check this runner's image was built from the released source
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ACTOR: ${{ github.actor }}
@@ -220,35 +297,60 @@ jobs:
           docker pull -q "$IMAGE@$DIGEST" > /dev/null
           revision=$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$IMAGE@$DIGEST")
           if [[ ! "$revision" =~ ^[0-9a-f]{40}$ ]]; then
-            echo "::error::$IMAGE@$DIGEST has no org.opencontainers.image.revision label, so its source cannot be checked. Nothing was tagged."
+            echo "::error::$IMAGE@$DIGEST has no org.opencontainers.image.revision label for $(uname -m), so its source cannot be checked. Nothing was tagged."
             exit 1
           fi
           git fetch -q origin "$revision"
           if ! git diff --quiet "$revision" "$SHA" -- . ':(exclude)action.yml'; then
-            echo "::error::$IMAGE@$DIGEST was built from $revision, which differs from release commit $SHA outside action.yml:"
+            echo "::error::$IMAGE@$DIGEST ($(uname -m)) was built from $revision, which differs from release commit $SHA outside action.yml:"
             git diff --stat "$revision" "$SHA" -- . ':(exclude)action.yml'
-            echo "::error::Nothing was tagged. Release a patch once pin-image has rebuilt the release PR."
+            echo "::error::Nothing was tagged. Release a patch once pin-commit has repinned the release PR."
             exit 1
           fi
-          echo "$IMAGE@$DIGEST was built from $revision, the released source"
+          echo "$IMAGE@$DIGEST ($(uname -m)) was built from $revision, the released source"
 
-      - name: Tag the pinned image
+      - name: Smoke test the pinned image
         run: |
           set -euo pipefail
-          docker buildx imagetools create -t "$IMAGE:$VERSION" -t "$IMAGE:$MAJOR" "$IMAGE@$DIGEST"
-
-      - name: Smoke test the published image
-        run: |
-          set -euo pipefail
-          docker pull "$IMAGE:$VERSION"
-          published=$(docker image inspect --format '{{index .RepoDigests 0}}' "$IMAGE:$VERSION" | cut -d@ -f2)
-          if [[ "$published" != "$DIGEST" ]]; then
-            echo "::error::$IMAGE:$VERSION is $published, but action.yml pins $DIGEST"
-            exit 1
-          fi
-          echo "published image runs node $(docker run --rm --entrypoint node "$IMAGE:$VERSION" --version)"
-          docker run --rm --entrypoint node "$IMAGE:$VERSION" \
+          echo "pinned image runs node $(docker run --rm --entrypoint node "$IMAGE@$DIGEST" --version) on $(uname -m)"
+          docker run --rm --entrypoint node "$IMAGE@$DIGEST" \
             -e 'console.log("commitlint " + require("/node_modules/@commitlint/lint/package.json").version)'
+
+  publish:
+    needs: [release-please, verify]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      packages: write
+    env:
+      VERSION: ${{ needs.release-please.outputs.version }}
+      MAJOR: ${{ needs.release-please.outputs.major }}
+      SHA: ${{ needs.release-please.outputs.sha }}
+      DIGEST: ${{ needs.verify.outputs.digest }}
+    steps:
+      - name: Tag the pinned image
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ACTOR: ${{ github.actor }}
+        run: |
+          set -euo pipefail
+          echo "$GH_TOKEN" | docker login ghcr.io -u "$ACTOR" --password-stdin
+          platforms=$(docker buildx imagetools inspect "$IMAGE@$DIGEST" --format '{{json .Manifest}}' \
+            | jq -r '[.manifests[].platform | "\(.os)/\(.architecture)"] | sort | join(" ")')
+          if [[ "$platforms" != "$PLATFORMS" ]]; then
+            echo "::error::$IMAGE@$DIGEST holds '$platforms', expected '$PLATFORMS'. Nothing was tagged."
+            exit 1
+          fi
+          docker buildx imagetools create -t "$IMAGE:$VERSION" -t "$IMAGE:$MAJOR" "$IMAGE@$DIGEST"
+          for tag in "$VERSION" "$MAJOR"; do
+            published=$(docker buildx imagetools inspect "$IMAGE:$tag" --format '{{json .Manifest}}' | jq -r .digest)
+            if [[ "$published" != "$DIGEST" ]]; then
+              echo "::error::$IMAGE:$tag is $published, but action.yml pins $DIGEST"
+              exit 1
+            fi
+          done
+          echo "tagged $IMAGE@$DIGEST ($platforms) as $VERSION and $MAJOR"
 
       - id: create_token
         uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
