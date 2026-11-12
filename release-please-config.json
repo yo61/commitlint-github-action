@@ -3,6 +3,7 @@
   "release-type": "node",
   "include-v-in-tag": true,
   "include-component-in-tag": false,
+  "exclude-paths": ["knowledge", "decisions", "quality"],
   "packages": {
     ".": {
       "package-name": "commitlint-github-action",
