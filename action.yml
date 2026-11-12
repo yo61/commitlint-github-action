@@ -39,7 +39,7 @@ runs:
   # Pinned by digest, not tag: a tag is mutable, so pinning this action by
   # commit SHA downstream would still leave the image swappable. The release
   # workflow sets it on each release PR.
-  image: docker://ghcr.io/yo61/commitlint-github-action@sha256:1d5d649ab901e341f940d7317175a11d57871b5fbefa0cfca382918b619a7d0b
+  image: docker://ghcr.io/yo61/commitlint-github-action@sha256:c7f8407c8b9fa6ee55cd1b3a8b657ab1e2d62d2ec1bdfeb5a68393bafae83664
 branding:
   icon: check-square
   color: blue

@@ -1,5 +1,12 @@
 # Changelog
 
+## [7.1.1](https://github.com/yo61/commitlint-github-action/compare/v7.1.0...v7.1.1) (2026-11-11)
+
+
+### Documentation
+
+* record the commitlint trailer decision and release knowledge ([#23](https://github.com/yo61/commitlint-github-action/issues/23)) ([36d843e](https://github.com/yo61/commitlint-github-action/commit/36d843e8837450ace69b4579b3561579638aff56))
+
 ## [7.1.0](https://github.com/yo61/commitlint-github-action/compare/v7.0.0...v7.1.0) (2026-11-11)
 
 
